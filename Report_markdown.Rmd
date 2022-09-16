@@ -1,0 +1,1192 @@
+---
+title: "Final Project"
+author: "Giulio"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 2
+urlcolor: blue
+bibliography: references.bib
+csl: aims-mathematics.csl
+geometry: "left=1.5cm,right=1.5cm,top=2cm,bottom=2cm"
+header-includes:
+  - \usepackage{float}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+\large
+
+```{r include=FALSE}
+# --------- LIBRARIES ------------- #
+library(bayesvl)
+library(Hmisc)
+library(ggplot2)
+library(kableExtra)
+library(R2jags)
+library(mcmcplots)
+library(bayesplot)
+library(ggmcmc)
+library(caret)
+library(nnet)
+library(Hmisc)
+library(TeachingDemos)
+```
+
+\newpage 
+
+# Illustration of the Dataset
+
+The dataset, available [here](https://www.scidb.cn/en/detail?dataSetId=cb5d36cce29f4e5695a586c9b85d04b6&dataSetType=journal) downloading the comma-separated values file "data_640_validated.csv", aim to examine the relationship between game-playing, in-game 
+behaviors, and environmental perceptions to fill in the gap of lacking resources for studying the effects of commercial video games. 
+
+The target of the survey are Nintendo’s Animal Crossing: New Horizons (ACNH) game players.
+When playing ACNH, the players immerse into a deserted island with the responsibilities of building their paradisiac village by developing the ecosystem and community. Their daily activities are related to the environment, such as growing flowers, planting fruit, cut tree, catching fish, snaring bugs, or submitting the fish and bugs to the museum.
+
+The data set includes six categories demonstrating different aspects of game 
+players, here I will list only the two categories I will use for the project: 
+
+* Environmental perceptions: for examining the environmental perception of game players;
+* In-game behavior: designed questions covering the most prominent activities associated with environmental values. 
+
+The survey was conducted from 15 to 30 May 2020 using Google Form in the communities of ACNH players on Discord, Reddit, and Facebook platforms. 
+
+# Data and  inferential goals of the analysis:
+
+Following [@Paper_Base], we want to hypothesized that people holding an anti-anthropocentric (Anti_Anthro) perception would associate with the frequency of in-game behaviors that harm natural lifeforms. To test this hypothesis, they used three variables from the data set. The anti-anthropocentric perception is represented by the C12 variable, which 
+measures the disagreement towards the statement "Humans were meant to rule over the rest of nature". Is a categorical variable that assume value in $\{1,2,3,4,5\}$, with higher value means a higher level of disagreement.
+
+To explain the anti-anthropocentric, they use two variable E16 and E17, respectively the frequency action of taking wood (TakeWood) and cutting down a tree (CutTree). Each of them assuming value in $\{1,2,3,4\}$, with higher value means a higher frequency on doing this action. 
+
+The two action is quite different since, whit the first we just obtain the natural resource without harming the natural lifeforms, while with the latter, we destroy the tree even after having received some wood from it.
+
+We end up with the following regression method:
+
+*Anti_Anthro $\sim \alpha +$ TakeWood $+$ CutTre.*
+
+```{r echo=FALSE, fig.align="center", out.width = "320px"}
+knitr::include_graphics("./Dag_model.pdf")
+```
+
+
+Let's start import the dataset and keep only the useful variable.
+
+```{r}
+# -------- DATA  ---------- #
+dat <- read.csv("data_640_validated.csv", header = TRUE)
+
+# rename and keep this three
+dat$Anti_Anthro <- dat$C12
+dat$TakeWood    <- dat$E16
+dat$CutTree     <- dat$E17
+
+dat <- dat[, c("Anti_Anthro","TakeWood","CutTree")]
+```
+
+```{r echo=FALSE, fig.align="center"}
+tab <- as.data.frame(sapply(dat, summary))
+t(tab) %>%
+  kbl(format = "latex", booktabs = T)  %>%
+  kable_styling(bootstrap_options = "striped",latex_options = "HOLD_position")
+```
+
+
+We can also look at the empirical distribution of our data:
+
+```{r echo=FALSE, fig.height=3}
+par(mfrow = c(1,3))
+plot(prop.table(table(dat$Anti_Anthro)), col = "black", type = "h", xlab = "Level of Disagreement", ylab = "Density", main = "Empirical distro of Anti Anthro")
+plot(prop.table(table(dat$TakeWood)), col = "black", type = "h", xlab = "Level of Frequencies in taking wood", ylab = "Density", main = "Empirical distro of TakeWood")
+plot(prop.table(table(dat$CutTree)), col = "black", type = "h", xlab = "Level of Frequencies in cutting tree", ylab = "Density", main = "Empirical distro of CutTree")
+par(mfrow = c(1,1))
+```
+
+and also inspect if there are some correlation:
+
+```{r}
+corr_matrix <- rcorr(as.matrix(dat))$r
+```
+
+```{r echo=FALSE, fig.align='center'}
+corr_matrix %>%
+  kbl(format = "latex", booktabs = T)
+```
+
+We don't see significant correlation in the features.
+
+# The incorrect model: Guassian linear regression for categorical response
+
+In the paper, they use a package called "bayesvl" [@bayesvl] that use the software "STAN" for the MCMC simulation. What I discover is that basically they don't care about the prediction, but just do a Monte Carlo Markov Chain to obtain an estimate of the regression coefficient in a way to explain if a variable is positively or negatively associated to the response variable. 
+
+Their model (adding the variance prior to be able the running in Jags) was:
+
+$$
+Y_i \sim N\big(\mu_i, \sigma^2\big)
+$$
+$$
+\mu_i = \alpha+\beta_{TakeWood} \cdot TakeWood_i + \beta_{CutTree}\cdot CutTree_i
+$$
+with prior distributions:
+
+* $\alpha \sim N(0, 100)$
+
+* $\beta_{TakeWood} \sim N(0,10)$
+
+* $\beta_{CutTree} \sim N(0,10)$
+
+* $\sigma^2 \sim IG(0.001, 0.001)$
+
+As we can see they use a Gaussian distribution to simulate categorical value. Even if we can use STAN, I was able to translate the code to JAGS and obtain the exact results, adding a  non informative Inverse Gamma prior for the variance of the Gaussian distribution. The model is show below.
+
+```
+  model
+	{
+		for( i in 1:N ) {
+			Anti_Anthro[i] ~ dnorm(mu[i], precision)
+			mu[i] <- a_Anti_Anthro + b_TakeWood * TakeWood[i] +
+			              b_CutTree * CutTree[i]
+		} 
+		
+		# ---- PREDICTION ---- #
+		# TakeWood = 1; CutTree = 4
+    Ypred1 ~ dnorm(mu1, precision)  # random variable
+    mu1 <- a_Anti_Anthro + b_TakeWood * 1 +
+			              b_CutTree * 4
+
+    # ---- PRIOR ---- #
+		a_Anti_Anthro ~ dnorm(0, 0.01)
+		b_TakeWood ~ dnorm(0.0, 0.1)
+		b_CutTree ~ dnorm(0.0, 0.1) 
+		precision ~ dgamma(0.001, 0.001)
+	}
+```
+
+We need to remark that in JAGS, the normal distribution takes in input the precision parameters, i.e the inverse of the variance. In our case we can directly input a Gamma distribution with the same hyperparameters.
+
+
+```{r include=FALSE}
+# ------ MODEL JAGS ----------- #
+
+model.string = "
+  model
+	{
+		for( i in 1:N ) {
+			Anti_Anthro[i] ~ dnorm(mu[i], precision)
+			mu[i] <- a_Anti_Anthro + b_TakeWood * TakeWood[i] +
+			              b_CutTree * CutTree[i]
+		} 
+		# PREDICTION
+    Ypred1 ~ dnorm(mu1, precision)  # random variable
+    mu1 <- a_Anti_Anthro + b_TakeWood * 1 +
+			              b_CutTree * 4
+
+    # PRIOR
+		a_Anti_Anthro ~ dnorm(0, 0.01)
+		b_TakeWood ~ dnorm(0.0, 0.1)
+		b_CutTree ~ dnorm(0.0, 0.1) 
+		precision ~ dgamma(0.001, 0.001)
+	}
+	"
+
+
+## write the model to a text file
+writeLines(model.string, con = "model_jags.txt")
+```
+
+Now we can run the simulation and reproduce their results: 
+
+```{r PAPER MCMC, results='hide', comment = NA, message = FALSE, warning = FALSE}
+# Building the data
+data <- as.list(dat)
+data$N <- nrow(dat)
+
+# list of parameters name
+parameters <- c("a_Anti_Anthro","b_TakeWood",
+                "b_CutTree", "Ypred1")
+# initial value 
+inits <- list(a_Anti_Anthro = 3, b_TakeWood = 0, b_CutTree = 0)
+initial.values <- list(inits)
+
+# MCMC with jags
+set.seed(123) # set seed for reproducibility
+model1 <- jags(data = data,
+                   inits = initial.values,
+                   parameters.to.save = parameters,
+                   model.file = "model_jags.txt",
+                   n.burnin = 2000, 
+                   n.chains = 1, n.thin = 1, 
+                   n.iter = 5000)
+```
+
+
+```{r echo=FALSE}
+tab <- model1$BUGSoutput$summary[parameters, ]
+tab %>%
+  kbl(format = "latex", booktabs = T)  %>%
+  kable_styling(bootstrap_options = "striped", latex_options=c("scale_down","HOLD_position"))
+```
+
+
+```{r echo=FALSE}
+mcmcplots::traplot(model1, parms = c("a_Anti_Anthro",
+                                     "b_TakeWood",
+                                     "b_CutTree"),
+                   plot.title = "Trace-Plot of the main parameters")
+```
+
+
+As we can see, the trace-plot behave fine, the standard deviation of the main parameters is low, and also we obtain the same results as the authors of the article. We don't show here the other diagnostic, since we will explore it later for our model, but can be seen in the paper.
+
+The problem is now, the prediction. Why we would want to use continuous prediction if the data are discrete? Also how we interpret the result and choose the right category?
+
+```{r echo=FALSE, message = FALSE, warning = FALSE}
+Ypred1 = model1$BUGSoutput$sims.array[,,"Ypred1"]
+
+polygon_ax <- function(Ypred, min, max){
+  
+  region = emp.hpd(Ypred, conf=0.95)
+  lower = region[1]
+  upper = region[2]
+  
+  densy = density(Ypred) 
+  xx <- densy$x
+  yy <- densy$y
+  
+  # Lower and higher indices on the X-axis
+  l <- min(which(xx >= lower))
+  u <- max(which(xx <  upper))
+  
+  x1 <- c(xx[c(l, l:u, u)])
+  y1 <- c(0, yy[l:u], 0)
+  
+  return(list(x1 = x1, y1 = y1))
+}
+
+
+axs = polygon_ax(Ypred1, -2,8)
+plot(density(Ypred1), lwd = 2, col = "purple",
+     main="Predicition of new answer given TakeWood = 1, CutTree = 4",
+     ylim=c(0,.5), xlab = "y")
+polygon(axs$x1, axs$y1,
+        col = yarrr::transparent('orange', trans.val = .7))
+legend("topright", legend = 'Empirical HPD 95%',
+       col = yarrr::transparent('orange', trans.val = .7),
+       pch = 15, bty = 'n')
+```
+
+
+We need to change the model. 
+
+
+# The Multinomial Logistic Regression Model
+
+Suppose we model a response variable $Y \in \{1, \ldots, K\}$, where $K$ is the number of level,  and a set of $p$ covariate $X = [X_1, \ldots, X_p]^T \in \mathcal{X}$. Let $\pi_j(\boldsymbol{x}) = P(Y = j \mid \boldsymbol{x} )$ with $\sum_{j = 1}^K \pi_j(\boldsymbol{x}) = 1$ [@agresti]. 
+
+This type of model is also called "Baseline Logistic Regression Model" since we pair each response categories with a baseline category $k^{\star}$.
+
+The Multinomial Logisitc Regression model in log-odd forms is: 
+
+$$
+\log\Bigg(\frac{\pi_j(\boldsymbol{x})}{\pi_{k^{\star}}(\boldsymbol{x})}\Bigg) = \alpha_j + \boldsymbol{\beta}_j \cdot \boldsymbol{x} \hspace{0.7cm} \forall j \in \{1, \ldots , K\}\setminus k^{\star}
+$$
+
+where $\alpha \in \mathbb{R}^{K-1}$ and $\boldsymbol{\beta} \in \mathbb{R}^{(K-1) \times p}$ are the regression coefficients. The ratio of the probability of choosing one outcome category over the probability of choosing the baseline category is often 
+referred as **relative risk** and it is also sometimes referred as **odds**. The **relative risk** is the linear model exponentiated,  leading to the fact that the exponentiated regression coefficients are relative risk ratios for a unit change in the predictor variable.
+
+
+The log is used to map the range $[0,1] \mapsto \mathbb{R}_{+}$ given a meaning to the regression image space. 
+
+
+We end up with a system of $K-1$ equations. We can also write the model in terms of the probabilities, for the notation I set $k^{\star} = K$: 
+
+$$
+\begin{aligned}
+&\pi_j(\boldsymbol{x}) = \frac{\exp\{\alpha_j + \boldsymbol{\beta}_j \cdot \boldsymbol{x}\}}{1+\sum_{r=1}^{K-1}\exp\{\alpha_r + \boldsymbol{\beta}_r \cdot \boldsymbol{x}\}} \hspace{0.7cm} \forall j = 1,\ldots, K-1;  \\[2ex]
+& \pi_K(\boldsymbol{x}) = 1-\pi_1(\boldsymbol{x})-\ldots-\pi_{K-1}(\boldsymbol{x}).
+\end{aligned}
+$$
+
+
+## Implementation in Jags
+
+Using Jags I need a list with the observation of the response variable, the feature, and number of observation with the number of category. 
+
+```{r}
+# ---- Convert to list for Jags input ------- #
+data <- as.list(dat)   # variable
+data$N <- nrow(dat)    # n-row
+data$J <- length(as.numeric(levels(as.factor(dat$Anti_Anthro))))  # n-categories
+```
+
+The formal multinomial logit regression model to implement is
+
+$$
+Anti\_Anthro \sim \operatorname{multinomial(\pi, 1)} 
+$$
+
+$$
+\pi_{j} = \frac{\phi_{j}}{\sum_{j=1}^K \phi_{j}} 
+$$
+
+$$
+\log(\phi_{j}) = \alpha_j +\beta^{TakeWood}_j \cdot TakeWood + \beta^{CutTree}_j\cdot CutTree
+$$
+
+which in jags the code its the one below [@winbugs]. Here we use the *dcat* distribution which is the same as taken a multinomial distribution with a single sample draw, more detail can be found in the Jags documentation [@Jags]. We will use as baseline category the one that occur more frequently in the dataset, which result in the last category $5$. 
+
+```
+  model
+	{
+	  # ------- Multinomial Logit Regression ------ #
+	  # baseline category 5
+    for(i in 1:N){
+        
+        Anti_Anthro[i] ~ dcat(p[i, 1:J])
+        
+        for (j in 1:J){
+          log(phi[i,j]) <-  intercept[j] + 
+                          b_TakeWood[j] * TakeWood[i] + 
+                          b_CutTree[j] * CutTree[i]
+        
+          p[i,j] <- phi[i,j]/sum(phi[i,1:J])  
+        } 
+      }   
+    
+    # We need to fix the effects corresponding 
+    # to the >>last<< observation category to 0:
+    intercept[J] <- 0
+    b_TakeWood[J] <- 0
+    b_CutTree[J] <- 0
+    
+    # ------  PRIOR --------- #
+    for(j in 1:(J-1)){
+        intercept[j] ~ dnorm(0, 0.01)
+        b_TakeWood[j] ~ dnorm(0, 0.1)
+        b_CutTree[j] ~ dnorm(0, 0.001)
+    }
+    
+    # ------- PREDICTION  -------- #
+    Anti_Anthro_new ~ dcat(pnew[1:J])
+    
+    for (j in 1:J){
+      log(phinew[j]) <-  intercept[j] + 
+                      b_TakeWood[j] * 1 + 
+                      b_CutTree[j] * 4
+    
+      pnew[j] <- phinew[j]/sum(phinew[1:J])  
+      } 
+  }
+```
+
+```{r echo=FALSE}
+# ------ MODEL JAGS ----------- #
+
+model.string = "
+  model
+	{
+	  # ------- Multinomial Logit Regression ------ #
+    for(i in 1:N){
+        
+        # The observation of 1,2,3,4 or 5
+        # with baseline 5
+        Anti_Anthro[i] ~ dcat(p[i, 1:J])
+        
+        for (j in 1:J){
+          log(q[i,j]) <-  intercept[j] + 
+                          b_TakeWood[j] * TakeWood[i] + 
+                          b_CutTree[j] * CutTree[i]
+        
+          p[i,j] <- q[i,j]/sum(q[i,1:J])  
+        } 
+      }   
+    
+    # We need to fix the effects corresponding 
+    # to the >>last<< observation category to 0:
+    intercept[J] <- 0
+    b_TakeWood[J] <- 0
+    b_CutTree[J] <- 0
+    
+    # ------  PRIOR --------- #
+    for(j in 1:(J-1)){
+        intercept[j] ~ dnorm(0, 0.01)
+        b_TakeWood[j] ~ dnorm(0, 0.1)
+        b_CutTree[j] ~ dnorm(0, 0.001)
+    }
+    
+    # ------- PREDICTION  -------- #
+    Anti_Anthro_new ~ dcat(pnew[1:J])
+    
+    for (j in 1:J){
+      log(qnew[j]) <-  intercept[j] + 
+                      b_TakeWood[j] * 1 + 
+                      b_CutTree[j] * 4
+    
+      pnew[j] <- qnew[j]/sum(qnew[1:J])  
+      } 
+  }
+"
+
+
+## write the model to a text file
+writeLines(model.string, con = "model_multicategory.txt")
+```
+
+Now we need tu build up the next component of the simulations. 
+
+The *parameters* array used to store the variable names, not necessary only the prior distributions, that allow us to retrieve the simulation for the variable in interest.
+
+The *initial.values* list in which we store a number of list corresponding to the number of chain we want to produce. Each list contains the starting value of each chain.
+
+Other parameters: 
+
+* n.chain = 2: because we want to do different simulation with different starting value to see how the chain is effected by the starting point;
+
+* n.thin = 10: because we want to achieve less autocorrelation during the Markov Process, otherwise will be very high;
+
+* n.burnin = 7000: large number of iteration to be discarded before the actual chain is considered. We use this high value because the chain of each parameters are very slow to converge to a stationary value;
+
+* n.iter = 40000: large number of iteration to compensate the n.thin and n.burnin that reduce the number of sample we generate, also to have a consistent number of effective (usable) sample size.
+
+To decide the number put above and below, I look at some diagnostic like Trace Plot, ACF plot, Cumulative Mean, that allow me to decide the burnin time or the thinning number, along with the starting value.
+
+
+```{r TRUE MODEL, results='hide', comment = NA, message = FALSE, warning = FALSE}
+# List of parameters name
+parameters <- c("intercept", "b_TakeWood", "b_CutTree", "Anti_Anthro_new")
+
+# Starting value initialization
+inits1 <- list( intercept = c(0,0,0,0,NA),
+                b_TakeWood = c(0,0,0,0,NA),
+                b_CutTree = c(0,0,0,0,NA))
+
+inits2 <- list( intercept = c(0.5,0.5,0.5,0.5,NA),
+                b_TakeWood = c(-0.5,-0.5,-0.5,-0.5,NA),
+                b_CutTree = c(0.5,0.5,0.5,0.5,NA))
+
+initial.values <- list(inits1 = inits1, inits2 = inits2)
+
+# MCMC with jags
+set.seed(123)
+MNL <- jags(data = data,
+           inits = initial.values,
+           parameters.to.save = parameters,
+           model.file = "model_multicategory.txt",
+           n.chains = 2, n.thin = 10,  
+           n.burnin = 7000,
+           n.iter = 40000)
+```
+
+We can look briefly some point estimate like posterior mean, standard deviation and the effective sample size we manage to achieve for the regression coefficient. Along with the quantile and the median, the $50\%$ quantile.
+
+
+```{r echo=FALSE, fig.pos='H'}
+# ---- Summaries ---- #
+MNL_summary <- MNL$BUGSoutput$summary[c(paste("b_TakeWood[", seq(1,4), "]", sep = ""),
+                                        paste("b_CutTree[", seq(1,4), "]", sep = ""),
+                                        paste("intercept[", seq(1,4), "]", sep = "")), ]
+MNL_summary %>%
+  kbl(format = "latex", booktabs = T)  %>%
+  kable_styling(bootstrap_options = "striped", latex_options=c("scale_down","HOLD_position"))
+```
+
+
+Looking at the posterior estimate of the standard deviation we can see how variable is the posterior distribution around the mean, and this values are not so low. 
+
+Also the effective sample size are relatively large for the simulation we have done, although some parameters are not.
+
+We can extract the chain and begin our analysis.
+
+```{r}
+# ------ MCMC Posterior parameters ----- #
+MNL.mcmc = as.mcmc(MNL)
+b_TakeWood <- MNL.mcmc[, c(paste("b_TakeWood[", seq(1,4), "]", sep = ""))]
+b_CutTree  <- MNL.mcmc[, c(paste("b_CutTree[", seq(1,4), "]", sep = ""))]
+intercept  <- MNL.mcmc[, c(paste("intercept[", seq(1,4), "]", sep = ""))]
+```
+
+\newpage
+
+
+```{r echo=FALSE, results='hide'}
+# ------ Posterior densities -------- #
+pdf("dens_b_TakeWood.pdf",  width = 4, height = 3) 
+mcmc_areas(b_TakeWood, prob = .95, point_est = "mean", border_size = .7)+ geom_vline(xintercept=0)
+dev.off()
+  
+pdf("dens_b_CutTree.pdf",  width = 4, height = 3) 
+mcmc_areas(b_CutTree, prob = .95, point_est = "mean", border_size = .7)+ geom_vline(xintercept=0)
+dev.off()
+
+pdf("dens_intercept.pdf",  width = 4, height = 3) 
+mcmc_areas(intercept, prob = .95, point_est = "mean", border_size = .7)+ geom_vline(xintercept=0)
+dev.off()
+```
+
+
+\begin{figure}[H]
+\centering
+{\Large \textbf{Posterior Density plot}}\par\medskip
+\begin{tabular}{cc}
+  \includegraphics[width=90mm]{"./dens_b_TakeWood.pdf"} &              
+  \includegraphics[width=90mm]{"./dens_b_CutTree.pdf"}\\
+(a) TakeWood & (b) CutTree \\[6pt]
+\end{tabular}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=90mm]{"./dens_intercept.pdf"}\\
+(c) Intercept 
+\end{figure}
+
+Here we plot the posterior densities of each regression coefficients, along with the $95\%$ credible interval. We can see that the uncertainty around the mean is very large as we notice before with the standard deviation. We can also say that not all the parameters have a Credible interval that allow us to define a constant sign.
+
+
+\newpage
+
+```{r echo=FALSE, results='hide'}
+# --------  Trace Plot  --------- #
+pdf("traceplotTakeWood.pdf",  width = 7, height = 5) 
+mcmcplots::traplot(b_TakeWood, plot.title = "Trace-Plot of TakeWood")
+dev.off()
+
+pdf("traceplotCutTree.pdf",  width = 7, height = 5) 
+mcmcplots::traplot(b_CutTree, plot.title = "Trace-Plot of CutTree")
+dev.off()
+
+pdf("traceplotIntercept.pdf",  width = 7, height = 5) 
+mcmcplots::traplot(intercept, plot.title = "Trace-Plot of Intercept")
+dev.off()
+```
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=160mm]{"./traceplotTakeWood.pdf"} \\
+
+\vspace{1cm}
+
+\includegraphics[width=160mm]{"./traceplotCutTree.pdf"}
+\end{figure}
+
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=160mm]{"./traceplotIntercept.pdf"}
+\end{figure}
+
+We can see that the traceplot are very dense, meaning that we achieve a good amount of effective sample size. Other insight is that the chain with different starting value overlap meaning that the Markov Process behave well, along with the fact that swing in a bounded range.
+
+
+\newpage
+
+```{r echo=FALSE, results='hide'}
+# --------   Moving Average --------  # 
+comulative_average = function(row) cumsum(row)/seq_along(row)
+c_mean <- function(A) apply(A, 2, comulative_average)
+
+b_TakeWood_cmean <- lapply(b_TakeWood, c_mean)
+b_CutTree_cmean <- lapply(b_CutTree, c_mean)
+intercept_cmean <- lapply(intercept, c_mean)
+
+pdf("MovingAvgTakeWood.pdf", width = 7, height = 5) 
+mcmcplots::traplot(b_TakeWood_cmean,
+                   plot.title = "Comulative average of Takewood")
+dev.off()
+
+pdf("MovingAvgCutTree.pdf",  width = 7, height = 5) 
+mcmcplots::traplot(b_CutTree_cmean, 
+                   plot.title = "Comulative average of CutTree")
+dev.off()
+
+pdf("MovingAvgIntercept.pdf",  width = 7, height = 5) 
+mcmcplots::traplot(intercept_cmean, 
+                   plot.title = "Comulative average of intercept")
+dev.off()
+```
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=150mm]{"./MovingAvgTakeWood.pdf"} \\
+
+\vspace{1cm}
+
+\includegraphics[width=150mm]{"./MovingAvgCutTree.pdf"}
+\end{figure}
+
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=150mm]{"./MovingAvgIntercept.pdf"}
+\end{figure}
+
+Most of the parameters seems to be reach a stationary value and also with different value they
+reach the same conclusion. Other parameters instead may need some extra time to reach a convergence.
+
+
+\newpage
+
+```{r echo=FALSE, results='hide'}
+# -------- Interval ---------- #
+pdf("intervalsTakeWood.pdf",  width = 7, height = 4) 
+mcmc_intervals(b_TakeWood)
+dev.off()
+
+pdf("intervalsCutTree.pdf",  width = 7, height = 4) 
+mcmc_intervals(b_CutTree)
+dev.off()
+
+pdf("intervalsIntercept.pdf",  width = 7, height = 4) 
+mcmc_intervals(intercept)
+dev.off()
+```
+
+\begin{figure}[H]
+\centering
+{\Large \textbf{TakeWood Intervals}}\par\medskip
+\includegraphics[width=130mm]{"./intervalsTakeWood.pdf"} \\
+
+\vspace{1cm}
+
+{\Large \textbf{CutTree Intervals}}\par\medskip
+\includegraphics[width=130mm]{"./intervalsCutTree.pdf"}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+{\Large \textbf{Intercept Intervals}}\par\medskip
+\includegraphics[width=130mm]{"./intervalsIntercept.pdf"}
+\end{figure}
+
+Here we can visualize better the coefficient sign, in base of a $50\%$ and $90\%$ CI. We can see that not all the parameters agree grouped in sign, or remain with high probability with the same sign.
+
+\newpage
+
+```{r echo=FALSE, results='hide'}
+# ---------- ACF -------------- # 
+pdf("ACFTakeWood.pdf",  width = 7, height = 5.3) 
+mcmc_acf(b_TakeWood)
+dev.off()
+
+pdf("ACFCutTree.pdf",  width = 7, height = 5.3) 
+mcmc_acf(b_CutTree)
+dev.off()
+
+pdf("ACFIntercept.pdf",  width = 7, height = 5.3) 
+mcmc_acf(intercept)
+dev.off()
+```
+
+\begin{figure}[H]
+\centering
+{\Large \textbf{TakeWood ACF}}\par\medskip
+\includegraphics[width=130mm]{"./ACFTakeWood.pdf"} \\
+
+\vspace{1cm}
+
+{\Large \textbf{CutTree ACF}}\par\medskip
+\includegraphics[width=130mm]{"./ACFCutTree.pdf"}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+{\Large \textbf{Intercept ACF}}\par\medskip
+\includegraphics[width=130mm]{"./ACFIntercept.pdf"}
+\end{figure}
+
+From this Autocorrelation Plot we can figure out that Markov Chain doesn't have low autocorrelation during its whole process, but more we increase the lag, more the autocorrelation decrease faster. We can increase the number of thinning in our simulation but this will provide less number of effective sample size unless we increase the already high number of iteration.
+
+
+\newpage
+
+```{r echo=FALSE, results='hide'}
+# --------- GELMAN PLOT ----------- # 
+pdf("gelmanTakeWood.pdf",  width = 7, height = 5.3) 
+gelman.plot(b_TakeWood)
+dev.off()
+
+pdf("gelmanCutTree.pdf",  width = 7, height = 5.3) 
+gelman.plot(b_CutTree)
+dev.off()
+
+pdf("gelmanIntercept.pdf",  width = 7, height = 5.3) 
+gelman.plot(intercept)
+dev.off()
+```
+
+\begin{figure}[H]
+\centering
+{\Large \textbf{TakeWood Gelman Plot}}\par\medskip
+\includegraphics[width=130mm]{"./gelmanTakeWood.pdf"} \\
+
+\vspace{1cm}
+
+{\Large \textbf{CutTree Gelman Plot}}\par\medskip
+\includegraphics[width=130mm]{"./gelmanCutTree.pdf"}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+{\Large \textbf{Intercept Gelman Plot}}\par\medskip
+\includegraphics[width=130mm]{"./gelmanIntercept.pdf"}
+\end{figure}
+
+The Gelman and Rubin test compares the within and between chain variances. It produces a test statistic called "R.hat". If R.hat is larger than 1 is a sign of non convergence.
+
+In our case we can see that in a long run the chain behave quite well for all the parameters except the coefficient $Intercept[4]$ which in a long run tends to increase the R.hat score.
+
+\newpage
+
+```{r echo=FALSE, results='hide'}
+# ---------  The Geweke diagnostic ------- #
+pdf("GewekeTakeWood.pdf", width = 7, height = 5.3) 
+geweke.plot(b_TakeWood)
+dev.off()
+
+pdf("GewekeCutTree.pdf", width = 7, height = 5.3) 
+geweke.plot(b_CutTree)
+dev.off()
+
+pdf("GewekeIntercept.pdf", width = 7, height = 5.3) 
+geweke.plot(intercept)
+dev.off()
+```
+
+\begin{figure}[H]
+\centering
+{\Large \textbf{TakeWood Geweke Plot}}\par\medskip
+\includegraphics[width=130mm]{"./GewekeTakeWood.pdf"} \\
+
+\vspace{1cm}
+
+{\Large \textbf{CutTree Geweke Plot}}\par\medskip
+\includegraphics[width=130mm]{"./GewekeCutTree.pdf"}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+{\Large \textbf{Intercept Geweke Plot}}\par\medskip
+\includegraphics[width=130mm]{"./GewekeIntercept.pdf"}
+\end{figure}
+
+The Geweke convergence diagnostic for Markov chains is based on a test for equality of the means of the first and last part of a Markov chain (by default the first 10% and the last 50%). If the samples are drawn from the stationary distribution of the chain, the two means are equal and Geweke’s statistic has an asymptotically standard normal distribution.  Since for some parameters we can see that the score exceed the bands, its a sign of non convergence yet and may require some extra iteration.
+
+
+\newpage 
+
+\textbf{{\Large Heidelberger e Welch Diagnostic}}
+
+The Heidelberger-Welch test directly tests whether or not the draws for each parameter come from a stationary distribution. A "failure" indicates that a longer MCMC run is needed, while if "passed"  the number of iterations to keep and the number to discard (burn-in) are reported.
+
+```{r echo=FALSE}
+# -------- Heidelberger & Welch ------- # 
+print("TakeWood coefficients")
+heidel.diag(b_TakeWood)
+
+print("CutTree coefficients")
+heidel.diag(b_CutTree)
+
+print("Intercept coefficients")
+heidel.diag(intercept)
+```
+
+While we can see that we pass the stationary test for all the parameters, we can also view that some don't succeed the half-width test which calculates a $95\%$ confidence interval for the mean, using the portion of the chain which passed the stationary test. Is an hint that we may have to increase the sample size.
+
+\newpage
+
+## Coefficient interpretation
+
+Before going to the interpretation in the Multinomial Logistic model sense, we can inspect if there is some linear correlation among the main parameters:
+
+### Correlation Matrix: 
+
+```{r}
+corr_matrix <- rcorr(cbind(b_TakeWood[[1]], b_CutTree[[1]]))$r
+```
+
+```{r echo=FALSE, fig.align='center'}
+corr_matrix %>%
+  kbl(format = "latex", booktabs = T)  %>%
+  kable_styling(bootstrap_options = "striped", latex_options=c("scale_down","HOLD_position"))
+```
+
+As we can see, looking at the grouped coefficient TakeWood and CutTree,  there is no evidence of linear correlation (we can see that the absolute value is less than $\sim 15$). We can see perhaps that there is a negative relationship (all value are negative) and we reach a moderate value for regression coefficient of the same category ($\sim 45$).
+
+Instead viewing the coefficients for the proper block, the parameters present a positive relationship but we don't reach value greater than $\sim 45$.
+
+### Log Odd base interpretation:
+
+```{r include=FALSE}
+mean_b_Takewood <- t(MNL_summary[c(paste("b_TakeWood[", seq(1,4), "]", sep = "")),  "mean"])
+rownames(mean_b_Takewood) <- "b_Takewood"
+colnames(mean_b_Takewood) <- seq(1,4)
+
+mean_b_CutTree <- t(MNL_summary[c(paste("b_CutTree[", seq(1,4), "]", sep = "")),  "mean"])
+rownames(mean_b_CutTree) <- "b_CutTree"
+colnames(mean_b_CutTree) <- seq(1,4)
+
+mean_tab <- rbind(mean_b_Takewood,mean_b_CutTree)
+
+df <- as.data.frame(mcmc_intervals_data(MNL.mcmc, prob = 0.90, point_est = "mean"))
+rownames(df) <- df$parameter
+df <- df[c(paste("b_TakeWood[", seq(1,4), "]", sep = ""),
+           paste("b_CutTree[", seq(1,4), "]", sep = "")),
+         c("ll","m" ,"hh")]
+colnames(df) <- c("lower", "mean", "upper")
+```
+
+Here we view the mean of the coefficients in log-odd probabilities along with the $90\%$ Equal tails.
+
+```{r echo=FALSE}
+df %>%
+  kbl(format = "latex", booktabs = T)  %>%
+  kable_styling(bootstrap_options = "striped", latex_options="HOLD_position")
+```
+
+
+Focusing on the *Takewood features*:
+
+* b_TakeWood[1]: the odds of choose "(1) Strongly agree" over "(5) Strongly disagree" decrease as the frequency of $x =  TakeWood$ increase, meaning that more often we do this action, less we agree in violating the nature. Is important to remark that this value is not often negative, but $90\%$ ET shows us that there, also if small, a probability to have a positive value, and also we include the zero.
+
+* b_TakeWood[2], b_TakeWood[3]: the odds of choosing "(2) Agree", "(3) Unsure" instead of "(5) Strongly disagree" decrease as the frequency of $x =  TakeWood$ increase, this time, they are always negative, and as before more often we do this action, less we agree in violating the nature.
+
+* b_TakeWood[4]: choosing "(4) Disagree" instead of (5) neither increase or decrease in a constant way as the frequency of Taken wood increase. What we can say is that in average, remain negative, coherent with the theoretical meaning of the covariate, and result smaller than the previous ones.
+
+In the end we can say that overall, increasing how often we Take Wood in the game, leads to  disagree (have higher category) in "humans were meant to rule over nature". Citing the Authors: _"TakeWood is positively associated with Anti_Anthro. [..]  A game player that takes wood from the tree is more likely to disagree that “humans were meant to rule over nature"_.
+
+
+Instead for the *CutTree*: 
+
+* b_CutTree[1], b_CutTree[2]: specular as b_TakeWood[1], the estimate odds of choose "(1) Strongly agree" or "(2) Agree", instead of "(5) Strongly disagree" increase as the frequency of $x =  CutTree$ increase, meaning that more often we do this action, more we are likely to agree with the statement. But the ET let us see that the sign is not constant, but we have low probability that we can have negative value.
+
+* b_CutTree[3]: the odds of choosing the neutral option over "(5) Strongly disagree", doesn't let us a precise interpretation of this coefficients. What I can say is that as neutral option, we can't stick with the interpretation of increase or decrease. In average is negative, and decrease respect the above two. We can say that more we Cut the Tree less we are likely to be Neutral. 
+
+* b_CutTree[4]: this parameters is always negative. The estimate odds of choose "(4) Disagree" instead of (5) decrease as the frequency of $x =  CutTree$ increase, meaning that if we Cut Tree more often, we want to avoid as much a neutral or weak option, and be more rigid choosing a strong disagree. 
+
+
+In the end we can say that CutTree has an influence in choosing to agree with violet the nature. Influence that decrease more we consider only positive option. Looking instead on the paper we have a precise statement: _"... CutTree has the opposite association (negative) with Anti_Anthro. [..] In contrast, if a player intentionally cuts down the tree even when he/she has taken wood from the tree (chopping the tree more than three times), he/she is more likely to agree with the anthropocentric worldview"_. 
+
+
+Relative Risk:
+
+```{r echo=FALSE}
+exp_mean_tab <- exp(mean_tab)
+exp_mean_tab %>%
+  kbl(format = "latex", booktabs = T)  %>%
+  kable_styling(bootstrap_options = "striped", latex_options="HOLD_position")
+```
+
+
+Other possible insight are that looking at the plot below, we can see that the TakeWood coefficients (and in a slighter way also CutTree ones) has a sort of non linear behavior in the average value. We want now using the simple model seen in the first part of the report add a quadratic term in this feature and see how the new regression coefficient behave (also for CutTree).
+
+```{r echo=FALSE, fig.align='center'}
+par(mfrow = c(1,2))
+plot(seq(1,4), mean_b_CutTree, pch = 20, col = 2, cex = 2, 
+     xlab = "Category", ylab = "Average Beta CutTree")
+lines(spline(1:4, mean_b_CutTree, n=1000), lwd=2, col = "blue")
+
+plot(seq(1,4), mean_b_Takewood, pch = 20, col = 2, cex = 2, 
+     xlab = "Category", ylab = "Average Beta TakeWood")
+lines(spline(1:4, mean_b_Takewood, n=1000), lwd=2, col = "blue")
+
+par(mfrow = c(1,1))
+```
+
+Also, CutTree seems to behave well in the decreasing of the "Agreement", since more we Disagree with the statement less we want the influence of this specific covariate. 
+
+And TakeWood instead increase as we reach a "Disagreement".  
+
+
+### Quadratic model in TakeWood
+
+$$
+Y_i \sim N\big(\mu_i, \sigma^2\big)
+$$
+
+$$
+\mu_i = \alpha+ \beta_{TakeWood} \cdot TakeWood_i + \gamma_{TakeWood} \cdot TakeWood_i^2 + \beta_{CutTree}\cdot CutTree_i
+$$
+
+here: $\gamma_{TakeWood} \sim N(0, 10)$.
+
+
+```{r include=FALSE}
+model.string = "
+  model
+	{
+		for( i in 1:N ) {
+			Anti_Anthro[i] ~ dnorm(mu[i], precision)
+			mu[i] <- a_Anti_Anthro + b_TakeWood * TakeWood[i] + 
+			              gamma_TakeWood * TakeWood[i]^2 +
+			              b_CutTree * CutTree[i]
+		} 
+		
+    # PRIOR
+		a_Anti_Anthro ~ dnorm(0, 0.01)
+		b_TakeWood ~ dnorm(0.0, 0.1)
+		gamma_TakeWood ~ dnorm(0.0, 0.1)
+		b_CutTree ~ dnorm(0.0, 0.1) 
+		precision ~ dgamma(0.001, 0.001)
+	}
+	"
+
+## write the model to a text file
+writeLines(model.string, con = "model_jags_quadratic1.txt")
+```
+
+
+```{r , results='hide', comment = NA, message = FALSE, warning = FALSE}
+# ------- MODEL JAGS (QUADRATIC IN TAKEWOOD) ---------- #
+
+# list of parameters name
+parameters <- c("a_Anti_Anthro",
+                "b_TakeWood", "gamma_TakeWood",
+                "b_CutTree")
+# initial value 
+inits <- list(a_Anti_Anthro = 3, b_TakeWood = 0,
+              gamma_TakeWood = 0, b_CutTree = 0)
+initial.values <- list(inits)
+
+# MCMC with jags
+set.seed(123) # set seed for reproducibility
+model2 <- jags(data = data,
+               inits = initial.values,
+               parameters.to.save = parameters,
+               model.file = "model_jags_quadratic1.txt",
+               n.burnin = 2000, 
+               n.chains = 1, n.thin = 1, 
+               n.iter = 5000)
+
+```
+
+```{r echo=FALSE}
+modelSummary2 = model2$BUGSoutput$summary[c("a_Anti_Anthro", "b_CutTree",   
+                                            "b_TakeWood", "gamma_TakeWood"), ]
+
+
+modelSummary2 %>%
+  kbl(format = "latex", booktabs = T)  %>%
+  kable_styling(bootstrap_options = "striped", latex_options=c("scale_down","HOLD_position"))
+```
+
+
+As we can see the $\gamma$ parameter include the zero only with the $95\%$ credible interval, while in average or looking at a lower credible interval the value zero isn't include. What we can say is that there is a sort of non linear dependence with the TakeWood covariate. Also the variability around the estimation of the linear regression coefficient of TakeWood increase by a lot.
+`
+The result doesn't change much, in fact we can see that the parabola (using the average estimation) is convex (increase as $TakeWood$ increase).
+
+
+### Quadratic model in CutTree
+
+$$
+Y_i \sim N\big(\mu_i, \sigma^2\big)
+$$
+
+$$
+\mu_i = \alpha+ \beta_{TakeWood} \cdot TakeWood_i  + \beta_{CutTree}\cdot CutTree_i + \gamma_{CutTree} \cdot CutTree^2
+$$
+
+here: $\gamma_{TakeWood} \sim N(0, 10)$.
+
+```{r include=FALSE}
+model.string = "
+  model
+	{
+		for( i in 1:N ) {
+			Anti_Anthro[i] ~ dnorm(mu[i], precision)
+			mu[i] <- a_Anti_Anthro + b_TakeWood * TakeWood[i] + 
+			              b_CutTree * CutTree[i] +
+			              gamma_CutTree * CutTree[i]^2 
+		} 
+		
+    # PRIOR
+		a_Anti_Anthro ~ dnorm(0, 0.01)
+		b_TakeWood ~ dnorm(0.0, 0.1)
+		b_CutTree ~ dnorm(0.0, 0.1) 
+		gamma_CutTree ~ dnorm(0.0, 0.1)
+		precision ~ dgamma(0.001, 0.001)
+	}
+	"
+
+
+## write the model to a text file
+writeLines(model.string, con = "model_jags_quadratic2.txt")
+```
+
+```{r , results='hide', comment = NA, message = FALSE, warning = FALSE}
+# ------- MODEL JAGS (QUADRATIC IN CutTree) ---------- #
+
+# list of parameters name
+parameters <- c("a_Anti_Anthro","b_TakeWood",
+                "b_CutTree", "gamma_CutTree")
+# initial value 
+inits <- list(a_Anti_Anthro = 3, b_TakeWood = 0,
+              gamma_CutTree = 0, b_CutTree = 0)
+initial.values <- list(inits)
+
+
+# MCMC with jags
+set.seed(123) # set seed for reproducibility
+model3 <- jags(data = data,
+               inits = initial.values,
+               parameters.to.save = parameters,
+               model.file = "model_jags_quadratic2.txt",
+               n.burnin = 2000, 
+               n.chains = 1, n.thin = 1, 
+               n.iter = 5000)
+
+```
+
+```{r echo=FALSE}
+modelSummary3 = model3$BUGSoutput$summary[c("a_Anti_Anthro", "b_CutTree",   
+                                            "b_TakeWood", "gamma_CutTree"), ]
+
+modelSummary3 %>%
+  kbl(format = "latex", booktabs = T)  %>%
+  kable_styling(bootstrap_options = "striped", latex_options=c("scale_down","HOLD_position"))
+```
+
+On the other end, here the quadratic term is well centered around the zero, and also has a very smaller value, meaning that the effect of the quadratic term cannot be negligible, but doesn't have a strong impact on the model choice. Also Here the variability around the linear term increase.
+
+The result doesn't change much, in fact we can see that the parabola (using the average estimation) is concave (decrease as $CutTree$ increase).
+
+
+
+
+```{r echo=FALSE}
+# DIC SCORE
+DIC_vec <- cbind(model1$BUGSoutput$DIC, model3$BUGSoutput$DIC, model2$BUGSoutput$DIC)
+colnames(DIC_vec) <- c("Linear model","QuadraticTakeWood" ,"QuadraticCutTree")
+
+DIC_vec %>%
+  kbl(format = "latex", booktabs = T)
+```
+
+The DIC score are slightly the same. We don't see an improvement. 
+
+
+## Prediction
+
+Lets predict the a possible answer to the survey of a gamer whose rarely TakeWood, but very often CutTree.
+
+```{r echo=FALSE,fig.align="center", fig.width=7, fig.height=4}
+# ----------  PREDICTION  --------- # 
+par(mfrow = c(1,2))
+plot(prop.table(table(MNL.mcmc[,"Anti_Anthro_new"][[1]])), type = "h", ylab = "Density", xlab = "Level of Disagreement", main = "First chain")
+plot(prop.table(table(MNL.mcmc[,"Anti_Anthro_new"][[2]])), type = "h", ylab = "Density", xlab = "Level of Disagreement", main = "Second chain")
+par(mfrow = c(1,1))
+```
+
+
+We can see that as we can image, the user will Agree (category 2) with the statement:
+"Humans were meant to rule over the rest of nature".
+
+
+\newpage
+
+# The frequentist approach
+
+From a frequentistic perspective we have an in-built machine learning model in the *nnet* package which implement the multinomial logistic regression.
+
+First of all we need to train the model, and possibly tuning it. So we need to split the already small dataset in train and test data, instead of using all the data as in the Bayesian case. We will use package *caret* for this task.
+
+```{r}
+# take a copy of the data
+data <- dat
+
+# factorize the response for the model 
+data$Anti_Anthro <- as.factor(data$Anti_Anthro)
+# impose as reference level the category 5
+data$out <- relevel(data$Anti_Anthro,ref = "5")
+
+# Train-Test split
+set.seed(1234) # set seed for reproducibility
+idx.tr = createDataPartition(y = data$out, 
+                             p = .70, list = FALSE)
+
+dat.tr = data[ idx.tr, ]
+dat.te = data[-idx.tr, ]
+```
+
+Let's look now our data:
+
+```{r}
+table(data$Anti_Anthro)
+table(dat.tr$Anti_Anthro)
+table(dat.te$Anti_Anthro)
+```
+
+As we can see the class are not balanced itself, this result in having lower number of value in each split.
+
+
+Now lets tune the model and predict on the test set. We can extract the accuracy of the model with the corresponding confusion matrix.
+
+```{r results='hide', comment = NA, message = FALSE, warning = FALSE}
+# Tuning parameter
+trctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+
+set.seed(1234) # For reproducibility 
+multinom_fit <- train(out ~ TakeWood + CutTree,
+                 data = dat.tr, method = "multinom",
+                 trControl  = trctrl,
+                 tuneLength = 15
+)
+
+# Prediction 
+test_pred <- predict(multinom_fit, newdata = dat.te[, -1])
+```
+
+
+```{r echo=FALSE}
+# How Accurately our model is working?
+CM_object <- confusionMatrix(test_pred, dat.te$out)
+accuracy <- CM_object$overall[1]
+CMatrix <- CM_object$table
+
+print(accuracy)
+print(CMatrix)
+```
+
+We can see that we mismatch a lot of categories due to have an unbalanced dataset.
+
+In the end we can do the same prediction as before and hope we land on the same results.
+
+```{r}
+# prediction on new test point
+TakeWood <- 1
+CutTree <- 4
+new.data <- data.frame(TakeWood, CutTree)
+
+test_pred <- predict(multinom_fit, newdata = new.data, type="prob")
+```
+
+
+```{r echo=FALSE}
+print(test_pred)
+```
+
+We can see that the highest probability is obtained by the class 2.
+
+Also looking at the regression coefficients in log-odds and exponential form:
+
+```{r echo=FALSE}
+coeff <- coef(multinom_fit$finalModel)
+print("Log-odd coeff")
+t(coeff)
+```
+
+```{r echo=FALSE}
+print("Exp coeff risk")
+t(exp(coeff))
+```
+
+
+The result as quite the same as the Bayesian analysis.
+
+
+\newpage
+
+# References
+
+
+
