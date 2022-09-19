@@ -5,6 +5,8 @@
 
 Starting from the analysis from the paper of [Vuong et al.](https://direct.mit.edu/dint/article/3/4/606/107672/A-Multinational-Data-Set-of-Game-Players-Behaviors), I try to improve and adjust the prediction they make using a Linear Regression Gaussian model with a Multinomial Logistic Regression more suitable for categorical data in a Bayesian setup using MCMC and the software JAGS.
 
+More information are available in the code.R script and the report.pdf file. 
+
 # The dataset
 
 The dataset available [here](https://www.scidb.cn/en/detail?dataSetId=cb5d36cce29f4e5695a586c9b85d04b6) aim to examine the relationship between game-playing, in-game behaviors, and environmental perceptions to fill in the gap of lacking resources for studying the effects of commercial video games. The target of the survey are Nintendo’s Animal Crossing: New Horizons (ACNH) game players.
