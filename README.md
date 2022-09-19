@@ -17,6 +17,55 @@ We want to hypothesized that people holding an anti-anthropocentric (Anti_Anthro
  <img src="https://github.com/giulio-derasmo/Bayesian-Analysis-for-Game-Players-Behaviors/blob/main/images/Dag_model.png" width="400">
 <p>
 
+# The model
+
+In order to better inference on this setup I use a Multinomial Logistic Regression implemented in JAGS using the following model script:
+ 
+```
+ model
+	{
+	  # ------- Multinomial Logit Regression ------ #
+    for(i in 1:N){
+        
+        # The observation of 1,2,3,4 or 5
+        # with baseline 5
+        Anti_Anthro[i] ~ dcat(p[i, 1:J])
+        
+        for (j in 1:J){
+          log(q[i,j]) <-  intercept[j] + 
+                          b_TakeWood[j] * TakeWood[i] + 
+                          b_CutTree[j] * CutTree[i]
+        
+          p[i,j] <- q[i,j]/sum(q[i,1:J])  
+        } 
+      }   
+    
+    # We need to fix the effects corresponding 
+    # to the >>last<< observation category to 0:
+    intercept[J] <- 0
+    b_TakeWood[J] <- 0
+    b_CutTree[J] <- 0
+    
+    # ------  PRIOR --------- #
+    for(j in 1:(J-1)){
+        intercept[j] ~ dnorm(0, 0.01)
+        b_TakeWood[j] ~ dnorm(0, 0.1)
+        b_CutTree[j] ~ dnorm(0, 0.001)
+    }
+    
+    # ------- PREDICTION  -------- #
+    Anti_Anthro_new ~ dcat(pnew[1:J])
+    
+    for (j in 1:J){
+      log(qnew[j]) <-  intercept[j] + 
+                      b_TakeWood[j] * 1 + 
+                      b_CutTree[j] * 4
+    
+      pnew[j] <- qnew[j]/sum(qnew[1:J])  
+      } 
+  }
+```
+ 
 # 
 <p align="center">
     <img src="https://user-images.githubusercontent.com/50860347/147412786-183da6b0-990f-4016-9f2e-0719d8066f5b.png" style="width: 100%"/>
