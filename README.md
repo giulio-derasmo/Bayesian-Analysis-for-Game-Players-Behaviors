@@ -13,7 +13,7 @@ The dataset available ![here](https://www.scidb.cn/en/detail?dataSetId=cb5d36cce
 
 We want to hypothesized that people holding an anti-anthropocentric (Anti_Anthro) perception would associate with the frequency of in-game behaviors that harm natural lifeforms. To test this hypothesis, they used three variables from the data set. The anti-anthropocentric perception is represented by the C12 variable, which measures the disagreement towards the statement “Humans were meant to rule over the rest of nature”. Is a categorical variable that assume value in {1, 2, 3, 4, 5}, with higher value means a higher level of disagreement. To explain the anti-anthropocentric, they use two variable E16 and E17, respectively the frequency action of taking wood (TakeWood) and cutting down a tree (CutTree). Each of them assuming value in {1, 2, 3, 4}, with higher value means a higher frequency on doing this action.
 
-![](https://github.com/giulio-derasmo/Bayesian-Analysis-for-Game-Players-Behaviors/blob/main/images/Dag_model.png)
+![](https://github.com/giulio-derasmo/Bayesian-Analysis-for-Game-Players-Behaviors/blob/main/images/Dag_model.png | width=80)
 
 
 
